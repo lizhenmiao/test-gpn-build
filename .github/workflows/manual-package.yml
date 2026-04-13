@@ -72,25 +72,27 @@ jobs:
 
           New-Item -ItemType Directory -Path package-output -Force | Out-Null
 
-          & jpackage `
-            --name "GpnTools" `
-            --type "app-image" `
-            --dest "package-output" `
-            --input "target" `
-            --main-jar $jar.Name `
-            --app-version $env:APP_VERSION `
-            --vendor "GPN" `
-            --description "GPN Tools" `
-            --java-options "-Dfile.encoding=UTF-8" `
-            --java-options "--server" `
-            --win-console
+          $jpackageArgs = @(
+            '--name', 'GpnTools',
+            '--type', 'app-image',
+            '--dest', 'package-output',
+            '--input', 'target',
+            '--main-jar', $jar.Name,
+            '--app-version', $env:APP_VERSION,
+            '--vendor', 'GPN',
+            '--description', 'GPN Tools',
+            '--java-options', '-Dfile.encoding=UTF-8',
+            '--arguments', 'server',
+            '--win-console'
+          )
+          & jpackage @jpackageArgs
 
           $appDir = Get-ChildItem -Path package-output -Directory | Select-Object -First 1
           if (-not $appDir) {
             throw "No app-image directory generated in package-output/"
           }
 
-          $launcher = Join-Path $appDir.FullName "GpnTools.exe"
+          $launcher = Join-Path $appDir.FullName 'GpnTools.exe'
           if (-not (Test-Path $launcher)) {
             throw "Launcher not found: $launcher"
           }
@@ -113,11 +115,11 @@ jobs:
           gh release view "$env:RELEASE_TAG" -R "$env:GITHUB_REPOSITORY" *> $null
 
           if ($LASTEXITCODE -ne 0) {
-            $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.txt"
+            $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
             @(
-              "Windows app-image package (zip)."
-              "Unzip and run GpnTools/GpnTools.exe."
-              "Source: $env:GITEE_REPO_URL"
+              'Windows app-image package (zip).',
+              'Unzip and run GpnTools/GpnTools.exe.',
+              "Source: $env:GITEE_REPO_URL",
               "Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
             ) | Set-Content -Path $notesFile -Encoding utf8
 
