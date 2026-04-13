@@ -106,7 +106,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view "$env:RELEASE_TAG" *> $null
+          gh release view "$env:RELEASE_TAG" -R "$env:GITHUB_REPOSITORY" *> $null
 
           if ($LASTEXITCODE -ne 0) {
             $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.txt"
@@ -116,7 +116,7 @@ jobs:
               "Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
             ) | Set-Content -Path $notesFile -Encoding utf8
 
-            gh release create "$env:RELEASE_TAG" --title "$env:RELEASE_TAG" --notes-file "$notesFile"
+            gh release create "$env:RELEASE_TAG" -R "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --notes-file "$notesFile"
           }
 
       - name: Upload exe asset to release
@@ -124,4 +124,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$env:RELEASE_TAG" "$env:ASSET_PATH" --clobber
+          gh release upload "$env:RELEASE_TAG" "$env:ASSET_PATH" -R "$env:GITHUB_REPOSITORY" --clobber
+
