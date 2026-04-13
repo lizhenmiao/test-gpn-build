@@ -44,10 +44,10 @@ jobs:
 
           notes_file="$RUNNER_TEMP/release-notes.txt"
           cat > "$notes_file" <<EOF
-Cross-platform app-image/package build.
-Source: $GITEE_REPO_URL
-Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
-EOF
+          Cross-platform app-image/package build.
+          Source: $GITEE_REPO_URL
+          Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          EOF
 
           gh release create "${RELEASE_TAG}" \
             -R "$GITHUB_REPOSITORY" \
