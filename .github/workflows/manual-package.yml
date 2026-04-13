@@ -35,12 +35,6 @@ jobs:
           cache: npm
           cache-dependency-path: source/gpn-tools-web/package-lock.json
 
-      - name: Install WiX toolset (required by jpackage)
-        shell: pwsh
-        run: |
-          choco install wixtoolset --no-progress -y
-          "C:\Program Files (x86)\WiX Toolset v3.11\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
       - name: Verify source layout
         shell: pwsh
         run: |
@@ -64,7 +58,7 @@ jobs:
         run: |
           mvn -B clean package -DskipTests
 
-      - name: Package with jpackage and rename
+      - name: Package app-image and zip
         working-directory: source/gpn-tools-server
         shell: pwsh
         run: |
@@ -80,7 +74,7 @@ jobs:
 
           & jpackage `
             --name "GpnTools" `
-            --type "exe" `
+            --type "app-image" `
             --dest "package-output" `
             --input "target" `
             --main-jar $jar.Name `
@@ -90,16 +84,25 @@ jobs:
             --java-options "-Dfile.encoding=UTF-8" `
             --win-console
 
-          $pkg = Get-ChildItem -Path package-output -Filter *.exe | Select-Object -First 1
-          if (-not $pkg) {
-            throw "No exe generated in package-output/"
+          $appDir = Get-ChildItem -Path package-output -Directory | Select-Object -First 1
+          if (-not $appDir) {
+            throw "No app-image directory generated in package-output/"
           }
 
-          $targetName = "windows-x64-$env:APP_VERSION.exe"
-          $targetPath = Join-Path (Resolve-Path package-output) $targetName
-          Move-Item -Force $pkg.FullName $targetPath
+          $launcher = Join-Path $appDir.FullName "GpnTools.exe"
+          if (-not (Test-Path $launcher)) {
+            throw "Launcher not found: $launcher"
+          }
 
-          "ASSET_PATH=$targetPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $zipName = "windows-x64-$env:APP_VERSION.zip"
+          $zipPath = Join-Path (Resolve-Path package-output) $zipName
+          if (Test-Path $zipPath) {
+            Remove-Item -Force $zipPath
+          }
+
+          Compress-Archive -Path $appDir.FullName -DestinationPath $zipPath
+
+          "ASSET_PATH=$zipPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Create release if missing
         shell: pwsh
@@ -111,7 +114,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.txt"
             @(
-              "Windows package only."
+              "Windows app-image package (zip)."
+              "Unzip and run GpnTools/GpnTools.exe."
               "Source: $env:GITEE_REPO_URL"
               "Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
             ) | Set-Content -Path $notesFile -Encoding utf8
@@ -119,10 +123,9 @@ jobs:
             gh release create "$env:RELEASE_TAG" -R "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --notes-file "$notesFile"
           }
 
-      - name: Upload exe asset to release
+      - name: Upload zip asset to release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "$env:RELEASE_TAG" "$env:ASSET_PATH" -R "$env:GITHUB_REPOSITORY" --clobber
-
