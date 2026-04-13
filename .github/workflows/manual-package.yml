@@ -1,4 +1,4 @@
-name: Windows Package Fixed
+name: Cross Platform Package
 
 on:
   workflow_dispatch:
@@ -10,34 +10,103 @@ env:
   GITEE_REPO_URL: https://gitee.com/chuncuideren/gpn
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    timeout-minutes: 60
+  prepare-release:
+    runs-on: ubuntu-22.04
+    outputs:
+      app_version: ${{ steps.meta.outputs.app_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+    steps:
+      - name: Generate version and release tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          date_part="$(date +%Y%m%d)"
+          build_id="${GITHUB_RUN_ID}"
+          app_version="${date_part}.${build_id}"
+          release_tag="v${app_version}"
+
+          echo "app_version=${app_version}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Create release if missing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${RELEASE_TAG}" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists."
+            exit 0
+          fi
+
+          notes_file="$RUNNER_TEMP/release-notes.txt"
+          cat > "$notes_file" <<EOF
+          Cross-platform app-image/package build.
+          Source: $GITEE_REPO_URL
+          Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          EOF
+
+          gh release create "${RELEASE_TAG}" \
+            -R "$GITHUB_REPOSITORY" \
+            --title "${RELEASE_TAG}" \
+            --notes-file "$notes_file"
+
+  package:
+    name: ${{ matrix.id }}
+    needs: prepare-release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x64
+            os: windows-latest
+            java_arch: x64
+            asset_name: windows-x64
+            package_type: app-image
+          - id: windows-x86
+            os: windows-latest
+            java_arch: x86
+            asset_name: windows-x86
+            package_type: app-image
+          - id: macos-intel
+            os: macos-13
+            java_arch: x64
+            asset_name: macos-intel
+            package_type: app-image
+          - id: macos-apple
+            os: macos-14
+            java_arch: aarch64
+            asset_name: macos-apple
+            package_type: app-image
+          - id: ubuntu-deb
+            os: ubuntu-22.04
+            java_arch: x64
+            asset_name: ubuntu-x64
+            package_type: deb
+          - id: centos-rpm
+            os: ubuntu-22.04
+            java_arch: x64
+            asset_name: centos-x64
+            package_type: rpm
+
     steps:
       - name: Clone source from Gitee
-        shell: pwsh
+        shell: bash
         run: |
-          git clone --depth 1 "$env:GITEE_REPO_URL" source
-
-      - name: Generate app version and release tag
-        shell: pwsh
-        run: |
-          $datePart = Get-Date -Format 'yyyyMMdd'
-          $buildId = $env:GITHUB_RUN_ID
-          $appVersion = "$datePart.$buildId"
-          $releaseTag = "v$appVersion"
-
-          "APP_VERSION=$appVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          Write-Host "APP_VERSION=$appVersion"
-          Write-Host "RELEASE_TAG=$releaseTag"
+          set -euo pipefail
+          git clone --depth 1 "$GITEE_REPO_URL" source
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          architecture: ${{ matrix.java_arch }}
           cache: maven
 
       - name: Setup Node 22
@@ -47,32 +116,42 @@ jobs:
           cache: npm
           cache-dependency-path: source/gpn-tools-web/package-lock.json
 
-      - name: Verify source layout
-        shell: pwsh
+      - name: Install Linux packaging tools
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
         run: |
-          if (-not (Test-Path source/gpn-tools-web/package.json)) {
-            throw "Missing source/gpn-tools-web/package.json"
-          }
-          if (-not (Test-Path source/gpn-tools-server/pom.xml)) {
-            throw "Missing source/gpn-tools-server/pom.xml"
-          }
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y fakeroot rpm
+
+      - name: Verify source layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f source/gpn-tools-web/package.json
+          test -f source/gpn-tools-server/pom.xml
 
       - name: Build Vue app
         working-directory: source/gpn-tools-web
-        shell: pwsh
+        shell: bash
         run: |
+          set -euo pipefail
           npm ci
           npm run build
 
       - name: Build Spring Boot jar
         working-directory: source/gpn-tools-server
-        shell: pwsh
+        shell: bash
         run: |
+          set -euo pipefail
           mvn -B clean package -DskipTests
 
-      - name: Package app-image and zip
+      - name: Package for Windows
+        if: ${{ runner.os == 'Windows' }}
         working-directory: source/gpn-tools-server
         shell: pwsh
+        env:
+          APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
         run: |
           $jar = Get-ChildItem -Path target -Filter *.jar |
             Where-Object { $_.Name -notlike '*original*' } |
@@ -86,7 +165,7 @@ jobs:
 
           $jpackageArgs = @(
             '--name', 'GpnTools',
-            '--type', 'app-image',
+            '--type', '${{ matrix.package_type }}',
             '--dest', 'package-output',
             '--input', 'target',
             '--main-jar', $jar.Name,
@@ -98,7 +177,6 @@ jobs:
             '--arguments', 'server',
             '--win-console'
           )
-
           & jpackage @jpackageArgs
 
           $appDir = Get-ChildItem -Path package-output -Directory | Select-Object -First 1
@@ -111,7 +189,7 @@ jobs:
             throw "Launcher not found: $launcher"
           }
 
-          $zipName = "windows-x64-$env:APP_VERSION.zip"
+          $zipName = "${{ matrix.asset_name }}-$env:APP_VERSION.zip"
           $zipPath = Join-Path (Resolve-Path package-output) $zipName
           if (Test-Path $zipPath) {
             Remove-Item -Force $zipPath
@@ -120,29 +198,100 @@ jobs:
           Compress-Archive -Path $appDir.FullName -DestinationPath $zipPath
           "ASSET_PATH=$zipPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Create release if missing
-        shell: pwsh
+      - name: Package for macOS
+        if: ${{ runner.os == 'macOS' }}
+        working-directory: source/gpn-tools-server
+        shell: bash
+        env:
+          APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
+        run: |
+          set -euo pipefail
+
+          JAR_PATH="$(ls target/*.jar | grep -v 'original' | head -n 1 || true)"
+          if [ -z "$JAR_PATH" ]; then
+            echo "No runnable jar found in target/" >&2
+            exit 1
+          fi
+
+          mkdir -p package-output
+
+          jpackage \
+            --name "GpnTools" \
+            --type "${{ matrix.package_type }}" \
+            --dest package-output \
+            --input target \
+            --main-jar "$(basename "$JAR_PATH")" \
+            --app-version "$APP_VERSION" \
+            --vendor "GPN" \
+            --description "GPN Tools" \
+            --java-options "-Djava.awt.headless=false" \
+            --java-options "-Dgpn.auto-open-browser=true" \
+            --arguments "server"
+
+          APP_DIR="$(find package-output -maxdepth 1 -type d -name '*.app' | head -n 1 || true)"
+          if [ -z "$APP_DIR" ]; then
+            echo "No .app generated in package-output/" >&2
+            exit 1
+          fi
+
+          ZIP_NAME="${{ matrix.asset_name }}-$APP_VERSION.zip"
+          ZIP_PATH="$(cd package-output && pwd)/$ZIP_NAME"
+          rm -f "$ZIP_PATH"
+
+          ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ZIP_PATH"
+          echo "ASSET_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
+
+      - name: Package for Linux
+        if: ${{ runner.os == 'Linux' }}
+        working-directory: source/gpn-tools-server
+        shell: bash
+        env:
+          APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
+        run: |
+          set -euo pipefail
+
+          JAR_PATH="$(ls target/*.jar | grep -v 'original' | head -n 1 || true)"
+          if [ -z "$JAR_PATH" ]; then
+            echo "No runnable jar found in target/" >&2
+            exit 1
+          fi
+
+          mkdir -p package-output
+
+          jpackage \
+            --name "GpnTools" \
+            --type "${{ matrix.package_type }}" \
+            --dest package-output \
+            --input target \
+            --main-jar "$(basename "$JAR_PATH")" \
+            --app-version "$APP_VERSION" \
+            --vendor "GPN" \
+            --description "GPN Tools" \
+            --java-options "-Djava.awt.headless=false" \
+            --java-options "-Dgpn.auto-open-browser=true" \
+            --arguments "server"
+
+          PKG_FILE="$(find package-output -maxdepth 1 -type f -name '*.${{ matrix.package_type }}' | head -n 1 || true)"
+          if [ -z "$PKG_FILE" ]; then
+            echo "No .${{ matrix.package_type }} package generated in package-output/" >&2
+            exit 1
+          fi
+
+          TARGET_NAME="${{ matrix.asset_name }}-$APP_VERSION.${{ matrix.package_type }}"
+          TARGET_PATH="package-output/$TARGET_NAME"
+          mv "$PKG_FILE" "$TARGET_PATH"
+
+          echo "ASSET_PATH=$(cd package-output && pwd)/$TARGET_NAME" >> "$GITHUB_ENV"
+
+      - name: Upload asset to release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |
-          gh release view "$env:RELEASE_TAG" -R "$env:GITHUB_REPOSITORY" *> $null
-
-          if ($LASTEXITCODE -ne 0) {
-            $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
-            @(
-              'Windows app-image package (zip).',
-              'Unzip and run GpnTools/GpnTools.exe.',
-              "Source: $env:GITEE_REPO_URL",
-              "Run: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-            ) | Set-Content -Path $notesFile -Encoding utf8
-
-            gh release create "$env:RELEASE_TAG" -R "$env:GITHUB_REPOSITORY" --title "$env:RELEASE_TAG" --notes-file "$notesFile"
-          }
-
-      - name: Upload zip asset to release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "$env:RELEASE_TAG" "$env:ASSET_PATH" -R "$env:GITHUB_REPOSITORY" --clobber
-
+          set -euo pipefail
+          if [ -z "${ASSET_PATH:-}" ] || [ ! -f "$ASSET_PATH" ]; then
+            echo "ASSET_PATH is missing or file not found: ${ASSET_PATH:-<empty>}" >&2
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "$ASSET_PATH" -R "$GITHUB_REPOSITORY" --clobber
