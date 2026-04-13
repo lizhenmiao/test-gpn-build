@@ -81,7 +81,6 @@ jobs:
             '--app-version', $env:APP_VERSION,
             '--vendor', 'GPN',
             '--description', 'GPN Tools',
-            '--add-modules', 'java.desktop',
             '--java-options', '-Djava.awt.headless=false',
             '--java-options', '-Dgpn.auto-open-browser=true',
             '--arguments', 'server',
