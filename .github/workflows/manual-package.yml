@@ -82,7 +82,7 @@ jobs:
             --vendor "GPN" `
             --description "GPN Tools" `
             --java-options "-Dfile.encoding=UTF-8" `
-            --java-options "-server" `
+            --java-options "--server" `
             --win-console
 
           $appDir = Get-ChildItem -Path package-output -Directory | Select-Object -First 1
