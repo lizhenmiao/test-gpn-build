@@ -7,6 +7,7 @@ permissions:
   contents: write
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   GITEE_REPO_URL: https://gitee.com/chuncuideren/gpn
 
 jobs:
@@ -102,7 +103,7 @@ jobs:
           git clone --depth 1 "$GITEE_REPO_URL" source
 
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -110,7 +111,7 @@ jobs:
           cache: maven
 
       - name: Setup Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22.22.0'
           cache: npm
